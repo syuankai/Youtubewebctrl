@@ -1,0 +1,18 @@
+[Unit]
+Description=YouTube Linux Audio Background Service
+After=network.target sound.target pulseaudio.service pipewire.service
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/yt-audio-player
+ExecStart=/usr/bin/node /opt/yt-audio-player/dist/server.cjs
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+SupplementaryGroups=audio
+
+[Install]
+WantedBy=multi-user.target

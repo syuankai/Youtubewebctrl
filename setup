@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# YouTube Linux 音樂播放服務 (YouTube Linux Audio Background Service)
+# 自動安裝腳本 (Auto Installer & Systemd Service Registrar)
+# ==============================================================================
+
+set -e
+
+# ANSI 顏色定義
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+echo -e "${CYAN}${BOLD}"
+echo "=========================================================="
+echo "    YouTube Linux 純音訊背景播放服務 - 一鍵安裝程式       "
+echo "=========================================================="
+echo -e "${NC}"
+
+# 1. 檢查 root / sudo 權限
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}[錯誤]${NC} 請使用 root 或 sudo 權限執行此安裝程式："
+  echo -e "       ${YELLOW}sudo ./setup${NC}"
+  exit 1
+fi
+
+REAL_USER=${SUDO_USER:-$(whoami)}
+INSTALL_DIR=$(pwd)
+SERVICE_NAME="yt-audio-player"
+PORT=3000
+
+echo -e "${BLUE}[步驟 1/6]${NC} 偵測作業系統套件管理工具..."
+
+# 2. 偵測套件管理器並安裝 mpv, ffmpeg, curl, nodejs, bluez 等依賴
+if command -v apt-get &> /dev/null; then
+  echo -e "${GREEN}[✔]${NC} 偵測到 Debian / Ubuntu (apt-get)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+    mpv ffmpeg curl nodejs npm bluez bluez-tools alsa-utils rfkill \
+    pulseaudio-module-bluetooth libspa-0.2-bluetooth 2>/dev/null || \
+    apt-get install -y -qq mpv ffmpeg curl nodejs npm bluez bluez-tools alsa-utils rfkill
+elif command -v pacman &> /dev/null; then
+  echo -e "${GREEN}[✔]${NC} 偵測到 Arch Linux (pacman)"
+  pacman -Sy --noconfirm mpv ffmpeg curl nodejs npm bluez bluez-utils alsa-utils rfkill
+elif command -v dnf &> /dev/null; then
+  echo -e "${GREEN}[✔]${NC} 偵測到 Fedora / RHEL (dnf)"
+  dnf install -y mpv ffmpeg curl nodejs npm bluez bluez-tools alsa-utils rfkill
+elif command -v zypper &> /dev/null; then
+  echo -e "${GREEN}[✔]${NC} 偵測到 openSUSE (zypper)"
+  zypper install -y mpv ffmpeg curl nodejs npm bluez bluez-tools alsa-utils rfkill
+elif command -v apk &> /dev/null; then
+  echo -e "${GREEN}[✔]${NC} 偵測到 Alpine Linux (apk)"
+  apk add --no-cache mpv ffmpeg curl nodejs npm bluez bluez-alsa alsa-utils
+else
+  echo -e "${YELLOW}[警告]${NC} 未能自動辨識套件管理器，請確認系統已安裝 mpv, ffmpeg, curl, nodejs, npm 與 bluez。"
+fi
+
+echo -e "${BLUE}[步驟 2/6]${NC} 安裝 / 更新最新版本 yt-dlp 與音訊環境配置..."
+curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+chmod a+rx /usr/local/bin/yt-dlp
+YTDLP_VER=$(/usr/local/bin/yt-dlp --version || echo "已安裝")
+echo -e "${GREEN}[✔]${NC} yt-dlp 安裝完成 (版本: ${YTDLP_VER})"
+
+# 檢查音訊配置（若為無音效卡之雲端虛擬環境或無聲卡主機，配置 ALSA fallback 避免報錯）
+if [ ! -f /etc/asound.conf ] && [ ! -f ~/.asoundrc ]; then
+  if [ ! -f /proc/asound/cards ] || grep -q "--- no soundcards ---" /proc/asound/cards 2>/dev/null; then
+    cat << 'EOF' > /etc/asound.conf
+# Fallback ALSA configuration for systems without hardware sound cards
+pcm.!default {
+    type null
+}
+ctl.!default {
+    type null
+}
+EOF
+    echo -e "${GREEN}[✔]${NC} 已設定無音效卡之 ALSA 容錯配置 (/etc/asound.conf)"
+  fi
+fi
+
+echo -e "${BLUE}[藍芽支援]${NC} 檢查藍芽裝置、安裝驅動與檢測連線狀態..."
+
+# 檢查 rfkill 是否軟體鎖定藍芽
+if command -v rfkill &> /dev/null; then
+  rfkill unblock bluetooth 2>/dev/null || true
+fi
+
+# 啟用並啟動藍芽守護進程 (bluetoothd)
+if command -v systemctl &> /dev/null; then
+  systemctl enable bluetooth.service 2>/dev/null || true
+  systemctl start bluetooth.service 2>/dev/null || true
+fi
+
+# 檢測藍芽適配器硬體狀態
+BT_DEV_FOUND=false
+if [ -d /sys/class/bluetooth ] && [ "$(ls -A /sys/class/bluetooth 2>/dev/null)" ]; then
+  BT_DEV_FOUND=true
+  BT_DEV_NAME=$(ls /sys/class/bluetooth | head -n 1)
+  echo -e "${GREEN}[✔]${NC} 偵測到實體藍芽控制器: ${CYAN}${BT_DEV_NAME}${NC}"
+elif command -v lsusb &> /dev/null && lsusb | grep -qi -E 'bluetooth|bluez'; then
+  BT_DEV_FOUND=true
+  echo -e "${GREEN}[✔]${NC} 偵測到 USB 藍芽轉接器 (Bluetooth Dongle)"
+else
+  echo -e "${YELLOW}[提示]${NC} 目前未偵測到實體藍芽適配器 (可隨時插入 USB 藍芽轉接器，驅動服務已配置完畢)"
+fi
+
+# 檢測藍芽連線服務狀態
+if command -v bluetoothctl &> /dev/null; then
+  echo -e "${GREEN}[✔]${NC} BlueZ 藍芽命令工具 (bluetoothctl) 已就緒"
+  # 將運行使用者加入 bluetooth 與 audio 群組以具備藍芽音訊裝置控制權限
+  usermod -a -G audio,bluetooth "${REAL_USER}" 2>/dev/null || true
+fi
+
+echo -e "${BLUE}[步驟 3/6]${NC} 檢查 Node.js 與專案環境..."
+NODE_VER=$(node -v 2>/dev/null || echo "未安裝")
+NPM_VER=$(npm -v 2>/dev/null || echo "未安裝")
+echo -e "       Node.js: ${NODE_VER}, NPM: ${NPM_VER}"
+echo -e "       安裝路徑: ${INSTALL_DIR}"
+echo -e "       執行用戶: ${REAL_USER}"
+
+echo -e "${BLUE}[步驟 4/6]${NC} 安裝專案相依套件並編譯..."
+cd "${INSTALL_DIR}"
+
+if [ -f "package.json" ]; then
+  npm install
+  npm run build || true
+else
+  echo -e "${RED}[錯誤]${NC} 未找到 package.json，請在專案目錄下執行 ./setup"
+  exit 1
+fi
+
+echo -e "${BLUE}[步驟 5/6]${NC} 註冊 systemd 背景服務並設定開機自啟動..."
+
+NODE_PATH=$(which node)
+NPM_PATH=$(which npm)
+
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+cat <<EOF > "${SERVICE_FILE}"
+[Unit]
+Description=YouTube Linux Audio Background Service
+After=network.target sound.target pulseaudio.service pipewire.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=${REAL_USER}
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${NODE_PATH} ${INSTALL_DIR}/dist/server.cjs
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+Environment=PORT=${PORT}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${PATH}
+
+# 音訊裝置存取權限
+SupplementaryGroups=audio
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chmod 644 "${SERVICE_FILE}"
+
+echo -e "${BLUE}[步驟 6/6]${NC} 重新加載 systemd 並啟動服務..."
+systemctl daemon-reload
+systemctl enable "${SERVICE_NAME}.service"
+systemctl restart "${SERVICE_NAME}.service"
+
+# 檢查服務狀態
+sleep 2
+if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+  STATUS_TXT="${GREEN}運行中 (active/running)${NC}"
+else
+  STATUS_TXT="${YELLOW}已啟用 (請檢查 journalctl -u ${SERVICE_NAME} -n 20)${NC}"
+fi
+
+# 取得本機 IP 地址
+IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+
+echo -e ""
+echo -e "${GREEN}${BOLD}==========================================================${NC}"
+echo -e "${GREEN}${BOLD}             🎉 安裝完成！背景服務已自啟動               ${NC}"
+echo -e "${GREEN}${BOLD}==========================================================${NC}"
+echo -e " 服務名稱:   ${CYAN}${SERVICE_NAME}.service${NC}"
+echo -e " 服務狀態:   ${STATUS_TXT}"
+echo -e " 開機自啟:   ${GREEN}已啟用 (Enabled)${NC}"
+echo -e " 網頁控制介面: ${BOLD}${CYAN}http://${IP_ADDR}:${PORT}${NC} 或 ${CYAN}http://localhost:${PORT}${NC}"
+echo -e ""
+echo -e "${BOLD}常用管理指令：${NC}"
+echo -e " • 查看服務狀態:   ${YELLOW}sudo systemctl status ${SERVICE_NAME}${NC}"
+echo -e " • 查看實時日誌:   ${YELLOW}sudo journalctl -u ${SERVICE_NAME} -f${NC}"
+echo -e " • 停止服務:       ${YELLOW}sudo systemctl stop ${SERVICE_NAME}${NC}"
+echo -e " • 重啟服務:       ${YELLOW}sudo systemctl restart ${SERVICE_NAME}${NC}"
+echo -e " • 解除安裝:       ${YELLOW}sudo ./uninstall.sh${NC}"
+echo -e "${GREEN}${BOLD}==========================================================${NC}"

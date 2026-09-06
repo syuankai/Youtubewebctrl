@@ -1,0 +1,6 @@
+{
+  "name": "YouTube Linux 音樂播放服務",
+  "description": "輕量高響應 Linux 背景終端機音樂播放服務與網頁控制台，支援 Docker 容器化一鍵啟動、GitHub Actions 鏡像構建、自訂 Redis 串流高速緩存、yt-dlp 純音訊播放、輸出聲卡選擇、藍芽設備連線與 systemd 開機自啟動。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

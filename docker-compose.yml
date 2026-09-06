@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # YouTube Linux Audio Player Web Service
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yt-audio-player
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      # Connect to the bundled Redis service for audio stream & metadata caching
+      - REDIS_URL=redis://redis:6379
+      # If using an external Redis instance, replace with your custom connection string:
+      # - REDIS_URL=redis://:yourpassword@192.168.1.100:6379/0
+    # Enable access to host physical soundcard (ALSA hardware playback)
+    # Uncomment the devices and group_add blocks if running on a host with physical speakers:
+    # devices:
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio
+    depends_on:
+      - redis
+    networks:
+      - audio-net
+
+  # ============================================================================
+  # Redis Cache Service for Lightning-Fast YouTube Stream & Metadata Caching
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: yt-player-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --save 60 1
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - audio-net
+
+volumes:
+  redis-data:
+    name: yt_player_redis_data
+
+networks:
+  audio-net:
+    driver: bridge
