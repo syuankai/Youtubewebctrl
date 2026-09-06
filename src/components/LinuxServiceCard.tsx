@@ -17,6 +17,7 @@ interface LinuxServiceCardProps {
 
 export const LinuxServiceCard: React.FC<LinuxServiceCardProps> = ({
   status,
+  systemInfo,
   onOpenSetupModal,
 }) => {
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
@@ -86,7 +87,7 @@ export const LinuxServiceCard: React.FC<LinuxServiceCardProps> = ({
             <span className="truncate">{mpvAlive ? '運行中' : '未啟動'}</span>
           </div>
           <span className="text-[10px] text-zinc-500 font-mono block">
-            PID: {status?.backendInfo?.pid || '4320'}
+            PID: {status?.backendInfo?.pid ? status.backendInfo.pid : '未啟動'}
           </span>
         </div>
 
@@ -101,15 +102,21 @@ export const LinuxServiceCard: React.FC<LinuxServiceCardProps> = ({
             <span className="truncate">{ipcConnected ? '已就緒' : '連接中'}</span>
           </div>
           <span className="text-[10px] text-zinc-500 font-mono truncate block" title={status?.backendInfo?.socketPath}>
-            mpv-yt-audio.sock
+            {status?.backendInfo?.socketPath ? status.backendInfo.socketPath.split('/').pop() : '-'}
           </span>
         </div>
 
         <div className="p-2.5 sm:p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
           <span className="text-zinc-500 text-[10px] sm:text-[11px] block">yt-dlp 模組</span>
           <div className="flex items-center gap-1.5 font-medium text-zinc-200 text-xs sm:text-sm">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-            <span className="truncate">已就緒 (Ready)</span>
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                status?.backendInfo?.ytdlpAvailable ? 'bg-emerald-400' : 'bg-red-500'
+              }`}
+            />
+            <span className="truncate">
+              {status?.backendInfo?.ytdlpAvailable ? '已就緒 (Ready)' : '未安裝 (Not Found)'}
+            </span>
           </div>
           <span className="text-[10px] text-zinc-500 font-mono block truncate">
             Pure Audio
@@ -117,13 +124,27 @@ export const LinuxServiceCard: React.FC<LinuxServiceCardProps> = ({
         </div>
 
         <div className="p-2.5 sm:p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
-          <span className="text-zinc-500 text-[10px] sm:text-[11px] block">開機自啟</span>
-          <div className="flex items-center gap-1.5 font-medium text-emerald-400 text-xs sm:text-sm">
-            <Power className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">systemd 支援</span>
+          <span className="text-zinc-500 text-[10px] sm:text-[11px] block">開機自啟 (Systemd)</span>
+          <div className="flex items-center gap-1.5 font-medium text-xs sm:text-sm">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                systemInfo?.systemd?.toLowerCase().includes('active: active') ||
+                systemInfo?.systemd?.toLowerCase().includes('active (running)')
+                  ? 'bg-emerald-400'
+                  : 'bg-zinc-500'
+              }`}
+            />
+            <span className="truncate text-zinc-200">
+              {systemInfo?.systemd?.toLowerCase().includes('active: active') ||
+              systemInfo?.systemd?.toLowerCase().includes('active (running)')
+                ? '守護進程運行中'
+                : '獨立/容器模式'}
+            </span>
           </div>
           <span className="text-[10px] text-zinc-500 font-mono truncate block">
-            yt-audio-player
+            {systemInfo?.systemd?.toLowerCase().includes('active')
+              ? 'yt-audio-player.service'
+              : '手動/Docker 進程'}
           </span>
         </div>
       </div>

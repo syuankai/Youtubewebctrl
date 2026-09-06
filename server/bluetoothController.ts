@@ -30,46 +30,8 @@ class BluetoothController {
   private isScanning = false;
   private scanTimeoutTimer: NodeJS.Timeout | null = null;
   private discoveredDevices = new Map<string, BluetoothDevice>();
-  private simulatedDevices = new Map<string, BluetoothDevice>([
-    [
-      '00:1B:66:82:11:22',
-      {
-        mac: '00:1B:66:82:11:22',
-        name: 'Sony WH-1000XM5 (藍芽耳機)',
-        paired: true,
-        connected: false,
-        trusted: true,
-        isAudio: true,
-        rssi: -58,
-      },
-    ],
-    [
-      'A4:C1:38:D9:88:99',
-      {
-        mac: 'A4:C1:38:D9:88:99',
-        name: 'JBL Flip 6 (可攜式藍芽喇叭)',
-        paired: false,
-        connected: false,
-        trusted: false,
-        isAudio: true,
-        rssi: -64,
-      },
-    ],
-    [
-      'F8:4E:17:33:55:77',
-      {
-        mac: 'F8:4E:17:33:55:77',
-        name: 'Bose SoundLink Revolve',
-        paired: false,
-        connected: false,
-        trusted: false,
-        isAudio: true,
-        rssi: -72,
-      },
-    ],
-  ]);
 
-  private hasRealAdapter(): Promise<boolean> {
+  public async hasRealAdapter(): Promise<boolean> {
     return new Promise((resolve) => {
       // 1. Check /sys/class/bluetooth
       if (fs.existsSync('/sys/class/bluetooth')) {
@@ -93,14 +55,13 @@ class BluetoothController {
     });
   }
 
-  private isBluetoothServiceActive(): Promise<boolean> {
+  public async isBluetoothServiceActive(): Promise<boolean> {
     return new Promise((resolve) => {
       exec('systemctl is-active bluetooth 2>/dev/null || pgrep -x bluetoothd', { timeout: 1500 }, (err, stdout) => {
         if (!err && (stdout.includes('active') || stdout.trim().length > 0)) {
-          resolve(true);
-        } else {
-          resolve(false);
+          return resolve(true);
         }
+        resolve(false);
       });
     });
   }
@@ -110,25 +71,21 @@ class BluetoothController {
     const serviceRunning = await this.isBluetoothServiceActive();
 
     if (!hasAdapter) {
-      // Container or hardware without bluetooth adapter
-      const paired = Array.from(this.simulatedDevices.values()).filter((d) => d.paired);
-      const connected = Array.from(this.simulatedDevices.values()).filter((d) => d.connected);
-      const discovered = Array.from(this.simulatedDevices.values());
-
+      // Real detection: No Bluetooth adapter hardware detected on system
       return {
         hasAdapter: false,
-        adapterName: '未偵測到實體藍芽控制器',
+        adapterName: undefined,
         adapterMac: undefined,
         powered: false,
         serviceRunning,
-        scanning: this.isScanning,
-        connectedDevices: connected,
-        pairedDevices: paired,
-        discoveredDevices: discovered,
+        scanning: false,
+        connectedDevices: [],
+        pairedDevices: [],
+        discoveredDevices: [],
         statusText: serviceRunning
-          ? '藍芽守護進程運行中，但未偵測到實體藍芽控制器 (hci0)'
-          : '未偵測到藍芽硬體 (實體主機請執行 sudo ./setup 並插入 USB 藍芽轉接器)',
-        error: '未偵測到實體藍芽硬體適配器',
+          ? '藍芽守護進程運行中，但未偵測到實體藍芽介面 (hci0)；請在主機插入 USB 藍芽轉接器'
+          : '未偵測到本機實體藍芽硬體 (若為實體 Linux 主機請執行 sudo ./setup 安裝驅動並插入藍芽轉接器)',
+        error: '未偵測到實體藍芽硬體 (No Bluetooth adapter detected)',
       };
     }
 
@@ -140,10 +97,10 @@ class BluetoothController {
         const nameMatch = output.match(/Name:\s+(.*)/i);
         const macMatch = output.match(/Controller\s+([0-9A-F:]{17})/i);
 
-        const adapterName = nameMatch ? nameMatch[1].trim() : 'Linux Bluetooth Adapter';
+        const adapterName = nameMatch ? nameMatch[1].trim() : 'Linux 實體藍芽介面';
         const adapterMac = macMatch ? macMatch[1].trim() : undefined;
 
-        // Query paired and connected devices
+        // Query real paired devices
         exec('timeout 2 bluetoothctl devices 2>/dev/null', { timeout: 2500 }, (dErr, dStdout) => {
           const deviceLines = (dStdout || '').split('\n').filter(Boolean);
           const realDevices: BluetoothDevice[] = [];
@@ -158,24 +115,24 @@ class BluetoothController {
                 mac,
                 name: name || mac,
                 paired: true,
-                connected: false, // will update below
+                connected: false,
                 isAudio: true,
               });
             }
           }
 
-          // Check connected devices
+          // Query real connected devices
           exec('timeout 2 bluetoothctl devices Connected 2>/dev/null', { timeout: 2500 }, (cErr, cStdout) => {
             const connectedLines = (cStdout || '').split('\n').filter(Boolean);
             const connectedMacs = new Set<string>();
 
             for (const line of connectedLines) {
               const match = line.match(/^Device\s+([0-9A-F:]{17})/i);
-              if (match) connectedMacs.add(match[1].trim());
+              if (match) connectedMacs.add(match[1].trim().toUpperCase());
             }
 
             for (const dev of realDevices) {
-              if (connectedMacs.has(dev.mac)) {
+              if (connectedMacs.has(dev.mac.toUpperCase())) {
                 dev.connected = true;
               }
             }
@@ -183,7 +140,7 @@ class BluetoothController {
             // Include any devices found in current scan
             const allDiscovered = [...realDevices];
             this.discoveredDevices.forEach((dev) => {
-              if (!allDiscovered.some((d) => d.mac.toLowerCase() === dev.mac.toLowerCase())) {
+              if (!allDiscovered.some((d) => d.mac.toUpperCase() === dev.mac.toUpperCase())) {
                 allDiscovered.push(dev);
               }
             });
@@ -202,8 +159,8 @@ class BluetoothController {
               pairedDevices: paired,
               discoveredDevices: allDiscovered,
               statusText: powered
-                ? `藍芽已就緒 (${adapterName})${connected.length > 0 ? ` - 已連線至 ${connected[0].name}` : ''}`
-                : '藍芽已停用 (電源已關閉)',
+                ? `藍芽控制器已就緒 (${adapterName})${connected.length > 0 ? ` - 已連線至 ${connected[0].name}` : ' - 待命'}`
+                : '藍芽控制器電源已關閉',
             });
           });
         });
@@ -213,32 +170,51 @@ class BluetoothController {
 
   public async startScan(): Promise<{ success: boolean; message: string }> {
     const hasAdapter = await this.hasRealAdapter();
+    if (!hasAdapter) {
+      return {
+        success: false,
+        message: '未偵測到實體藍芽控制器，無法啟動硬體掃描',
+      };
+    }
 
     this.isScanning = true;
     if (this.scanTimeoutTimer) clearTimeout(this.scanTimeoutTimer);
 
     this.scanTimeoutTimer = setTimeout(() => {
       this.isScanning = false;
-      if (hasAdapter) {
-        exec('bluetoothctl scan off 2>/dev/null || true');
-      }
+      exec('bluetoothctl scan off 2>/dev/null || true');
     }, 10000);
 
-    if (!hasAdapter) {
-      // In simulated / container mode: simulate discovery of nearby audio devices
-      return {
-        success: true,
-        message: '已開始掃描周邊藍芽音訊設備 (持續 10 秒)',
-      };
-    }
-
     return new Promise((resolve) => {
-      // Start background scan with bluetoothctl
-      exec('timeout 8 bluetoothctl scan on 2>/dev/null &', { timeout: 2000 }, (err) => {
-        resolve({
-          success: !err,
-          message: err ? '啟動藍芽掃描失敗' : '已啟動藍芽掃描，正在搜尋周邊裝置...',
-        });
+      // Start background scan with bluetoothctl and parse discovered devices
+      const scanProc = spawn('bluetoothctl', ['scan', 'on'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      scanProc.stdout?.on('data', (data) => {
+        const text = data.toString();
+        const matches = text.matchAll(/Device\s+([0-9A-F:]{17})\s+(.*)/gi);
+        for (const m of matches) {
+          const mac = m[1].trim();
+          const name = m[2].trim();
+          if (name && !this.discoveredDevices.has(mac)) {
+            this.discoveredDevices.set(mac, {
+              mac,
+              name,
+              paired: false,
+              connected: false,
+              isAudio: true,
+            });
+          }
+        }
+      });
+
+      setTimeout(() => {
+        try {
+          scanProc.kill();
+        } catch {}
+      }, 10000);
+
+      resolve({
+        success: true,
+        message: '已啟動實體藍芽掃描，正在搜尋周邊裝置 (10 秒)...',
       });
     });
   }
@@ -259,26 +235,14 @@ class BluetoothController {
     const hasAdapter = await this.hasRealAdapter();
 
     if (!hasAdapter) {
-      // Simulated container connection
-      const dev = this.simulatedDevices.get(mac);
-      if (dev) {
-        // Disconnect other simulated devices first
-        this.simulatedDevices.forEach((d) => {
-          d.connected = false;
-        });
-        dev.connected = true;
-        dev.paired = true;
-        dev.trusted = true;
-        return {
-          success: true,
-          message: `已成功連線至藍芽設備: ${dev.name}`,
-        };
-      }
-      return { success: false, message: '找不到指定的藍芽裝置' };
+      return {
+        success: false,
+        message: '未偵測到實體藍芽控制器，無法連線至藍芽設備',
+      };
     }
 
     return new Promise((resolve) => {
-      // Trust, pair, and connect
+      // Trust, pair, and connect via bluetoothctl
       const cmd = `bluetoothctl trust "${mac}" && bluetoothctl pair "${mac}" ; timeout 10 bluetoothctl connect "${mac}"`;
       exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
         const output = (stdout || '') + (stderr || '');
@@ -300,12 +264,7 @@ class BluetoothController {
     const hasAdapter = await this.hasRealAdapter();
 
     if (!hasAdapter) {
-      const dev = this.simulatedDevices.get(mac);
-      if (dev) {
-        dev.connected = false;
-        return { success: true, message: `已中斷連線: ${dev.name}` };
-      }
-      return { success: false, message: '找不到指定的藍芽裝置' };
+      return { success: false, message: '未偵測到實體藍芽控制器' };
     }
 
     return new Promise((resolve) => {
@@ -323,13 +282,7 @@ class BluetoothController {
     const hasAdapter = await this.hasRealAdapter();
 
     if (!hasAdapter) {
-      const dev = this.simulatedDevices.get(mac);
-      if (dev) {
-        dev.paired = true;
-        dev.trusted = true;
-        return { success: true, message: `已成功配對: ${dev.name}` };
-      }
-      return { success: false, message: '找不到指定的藍芽裝置' };
+      return { success: false, message: '未偵測到實體藍芽控制器' };
     }
 
     return new Promise((resolve) => {
@@ -346,13 +299,7 @@ class BluetoothController {
     const hasAdapter = await this.hasRealAdapter();
 
     if (!hasAdapter) {
-      const dev = this.simulatedDevices.get(mac);
-      if (dev) {
-        dev.paired = false;
-        dev.connected = false;
-        return { success: true, message: `已解除配對: ${dev.name}` };
-      }
-      return { success: false, message: '找不到指定的藍芽裝置' };
+      return { success: false, message: '未偵測到實體藍芽控制器' };
     }
 
     return new Promise((resolve) => {

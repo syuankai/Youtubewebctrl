@@ -159,11 +159,19 @@ class MpvController {
   private loopMode: 'none' | 'one' | 'all' = 'none';
   private detectedAudioOutput = 'ALSA / PulseAudio / PipeWire (Linux Local Speaker)';
   private currentAudioDevice = 'auto';
+  private isYtdlpAvailable = false;
 
   constructor() {
     ensureAlsaFallbackConfig();
+    this.checkYtdlp();
     this.initMpv();
     this.startStatusPolling();
+  }
+
+  private checkYtdlp() {
+    exec('yt-dlp --version', { timeout: 3000 }, (err, stdout) => {
+      this.isYtdlpAvailable = !err && Boolean(stdout && stdout.trim());
+    });
   }
 
   public async initMpv() {
@@ -752,7 +760,7 @@ class MpvController {
       backendInfo: {
         mpvAlive: Boolean(this.mpvProcess && !this.mpvProcess.killed),
         ipcConnected: this.isConnected,
-        ytdlpAvailable: true,
+        ytdlpAvailable: this.isYtdlpAvailable,
         socketPath: SOCKET_PATH,
         audioOutput: this.detectedAudioOutput,
         currentAudioDevice: this.currentAudioDevice,

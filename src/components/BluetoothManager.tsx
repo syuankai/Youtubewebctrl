@@ -131,8 +131,10 @@ export const BluetoothManager: React.FC<BluetoothManagerProps> = ({ onAudioDevic
     }
   };
 
-  const connectedList = (status?.devices || []).filter((d) => d.connected);
-  const discoveredList = (status?.devices || []).filter((d) => !d.connected);
+  const connectedList = status?.connectedDevices || [];
+  const discoveredList = (status?.discoveredDevices || []).filter(
+    (d) => !connectedList.some((c) => c.mac.toUpperCase() === d.mac.toUpperCase())
+  );
 
   return (
     <div
