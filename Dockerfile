@@ -29,8 +29,13 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 RUN echo 'pcm.!default {\n    type null\n}\nctl.!default {\n    type null\n}\n' > /etc/asound.conf
 
 # Copy package manifests and install all dependencies (including devDependencies for build)
+# Use npm ci if package-lock.json exists, with safe fallback to npm install
 COPY package*.json ./
-RUN npm ci --include=dev
+RUN if [ -f package-lock.json ]; then \
+        npm ci --include=dev || npm install --include=dev; \
+    else \
+        npm install --include=dev; \
+    fi
 
 # Copy project source files
 COPY . .
