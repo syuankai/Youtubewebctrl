@@ -5,6 +5,44 @@ import path from 'path';
 import { bluetoothController } from './bluetoothController';
 import { redisCache } from './redisCache';
 
+export type AudioQuality = 'high' | 'saver' | 'voice';
+
+export interface AudioQualityConfig {
+  id: AudioQuality;
+  label: string;
+  subLabel: string;
+  ytdlFormat: string;
+  audioQuality: string; // --audio-quality parameter for yt-dlp: 0 (best/320k), 7 (saver/96k), 9 (voice/64k)
+  bitrateDesc: string;
+}
+
+export const AUDIO_QUALITY_PRESETS: Record<AudioQuality, AudioQualityConfig> = {
+  high: {
+    id: 'high',
+    label: '高音質',
+    subLabel: '最高位元率 • 256k/320k 優先',
+    ytdlFormat: 'bestaudio/best',
+    audioQuality: '0',
+    bitrateDesc: '~256-320 kbps (最高品質)',
+  },
+  saver: {
+    id: 'saver',
+    label: '節省流量',
+    subLabel: '低頻寬流暢 • 64k-96k',
+    ytdlFormat: 'bestaudio[abr<=96]/worstaudio/worst',
+    audioQuality: '7',
+    bitrateDesc: '~64-96 kbps (節流省網)',
+  },
+  voice: {
+    id: 'voice',
+    label: '純語音模式',
+    subLabel: 'Podcast / 演講 • 人聲優化',
+    ytdlFormat: 'bestaudio[abr<=64]/worstaudio/worst',
+    audioQuality: '9',
+    bitrateDesc: '~48-64 kbps (人聲極省)',
+  },
+};
+
 export interface PlayerStatus {
   state: 'idle' | 'loading' | 'playing' | 'paused' | 'error';
   url: string;
@@ -16,6 +54,8 @@ export interface PlayerStatus {
   volume: number;
   isMuted: boolean;
   loop: 'none' | 'one' | 'all';
+  audioQuality: AudioQuality;
+  audioQualityLabel?: string;
   lastError: string | null;
   queue: QueueItem[];
   history: HistoryItem[];
@@ -157,6 +197,7 @@ class MpvController {
   private queue: QueueItem[] = [];
   private history: HistoryItem[] = [];
   private loopMode: 'none' | 'one' | 'all' = 'none';
+  private currentAudioQuality: AudioQuality = 'high';
   private detectedAudioOutput = 'ALSA / PulseAudio / PipeWire (Linux Local Speaker)';
   private currentAudioDevice = 'auto';
   private isYtdlpAvailable = false;
@@ -187,18 +228,20 @@ class MpvController {
     const { ao, description } = detectAudioOutput();
     this.detectedAudioOutput = description;
 
+    const preset = AUDIO_QUALITY_PRESETS[this.currentAudioQuality] || AUDIO_QUALITY_PRESETS.high;
+
     // Spawn mpv in background
     const args = [
       '--no-video',
       '--idle=yes',
       `--input-ipc-server=${SOCKET_PATH}`,
-      '--ytdl-format=bestaudio/best',
+      `--ytdl-format=${preset.ytdlFormat}`,
       '--audio-display=no',
       `--ao=${ao}`,
       '--volume=80',
       '--keep-open=no',
       '--msg-level=ao/alsa=no,ao=warn',
-      '--ytdl-raw-options=js-runtimes=node',
+      `--ytdl-raw-options=audio-quality=${preset.audioQuality},js-runtimes=node`,
     ];
 
     const possibleCookies = ['./cookies.txt', '/etc/yt-audio-player/cookies.txt'];
@@ -728,6 +771,29 @@ class MpvController {
     return true;
   }
 
+  public async setAudioQuality(quality: AudioQuality): Promise<boolean> {
+    const preset = AUDIO_QUALITY_PRESETS[quality];
+    if (!preset) return false;
+    this.currentAudioQuality = quality;
+
+    if (this.isConnected) {
+      await this.sendCommand(['set_property', 'ytdl-format', preset.ytdlFormat]);
+      await this.sendCommand(['set_property', 'ytdl-raw-options', `audio-quality=${preset.audioQuality},js-runtimes=node`]);
+
+      // If audio is currently playing or active, reload it smoothly at the current playback position
+      if (!this.isIdle && this.currentUrl) {
+        const currentPos = this.lastPosition;
+        console.log(`[mpv] switching quality to "${preset.label}" (--audio-quality ${preset.audioQuality}) at pos ${currentPos}s`);
+        await this.sendCommand(['loadfile', this.currentUrl, 'replace', `start=${currentPos}`]);
+      }
+    }
+    return true;
+  }
+
+  public getAudioQuality(): AudioQuality {
+    return this.currentAudioQuality;
+  }
+
   public getStatus(): PlayerStatus {
     let state: 'idle' | 'loading' | 'playing' | 'paused' | 'error' = 'idle';
 
@@ -743,6 +809,8 @@ class MpvController {
       state = 'playing';
     }
 
+    const currentPreset = AUDIO_QUALITY_PRESETS[this.currentAudioQuality] || AUDIO_QUALITY_PRESETS.high;
+
     return {
       state,
       url: this.currentUrl,
@@ -754,6 +822,8 @@ class MpvController {
       volume: this.currentVolume,
       isMuted: this.isMuted,
       loop: this.loopMode,
+      audioQuality: this.currentAudioQuality,
+      audioQualityLabel: currentPreset.label,
       lastError: this.lastError,
       queue: this.queue,
       history: this.history,

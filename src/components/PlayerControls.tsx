@@ -12,8 +12,12 @@ import {
   ClipboardPaste,
   Repeat,
   Repeat1,
+  Sparkles,
+  Wifi,
+  Mic,
+  Sliders,
 } from 'lucide-react';
-import { PlayerStatus } from '../types';
+import { PlayerStatus, AudioQuality } from '../types';
 
 interface PlayerControlsProps {
   status: PlayerStatus | null;
@@ -27,8 +31,59 @@ interface PlayerControlsProps {
   onToggleMute: () => Promise<void>;
   onStop: () => Promise<void>;
   onLoopChange: (loop: 'none' | 'one' | 'all') => Promise<void>;
+  onAudioQualityChange: (quality: AudioQuality) => Promise<void>;
   loading: boolean;
 }
+
+const QUALITY_OPTIONS: {
+  id: AudioQuality;
+  label: string;
+  subLabel: string;
+  tag: string;
+  qualityParam: string;
+  icon: React.ComponentType<{ className?: string }>;
+  activeBg: string;
+  activeBorder: string;
+  activeText: string;
+  badgeBg: string;
+}[] = [
+  {
+    id: 'high',
+    label: '高音質',
+    subLabel: '最高位元率 • 256k/320k',
+    tag: '320k 優先',
+    qualityParam: '--audio-quality 0',
+    icon: Sparkles,
+    activeBg: 'bg-emerald-500/15',
+    activeBorder: 'border-emerald-500/40 shadow-emerald-950/40',
+    activeText: 'text-emerald-300',
+    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+  },
+  {
+    id: 'saver',
+    label: '節省流量',
+    subLabel: '低頻寬流暢 • 64k-96k',
+    tag: '64k-96k',
+    qualityParam: '--audio-quality 7',
+    icon: Wifi,
+    activeBg: 'bg-amber-500/15',
+    activeBorder: 'border-amber-500/40 shadow-amber-950/40',
+    activeText: 'text-amber-300',
+    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+  },
+  {
+    id: 'voice',
+    label: '純語音模式',
+    subLabel: 'Podcast/演講 • 極省流量',
+    tag: '48k-64k',
+    qualityParam: '--audio-quality 9',
+    icon: Mic,
+    activeBg: 'bg-purple-500/15',
+    activeBorder: 'border-purple-500/40 shadow-purple-950/40',
+    activeText: 'text-purple-300',
+    badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+  },
+];
 
 export const PlayerControls: React.FC<PlayerControlsProps> = ({
   status,
@@ -40,11 +95,13 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onToggleMute,
   onStop,
   onLoopChange,
+  onAudioQualityChange,
   loading,
 }) => {
   const [urlInput, setUrlInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localVolume, setLocalVolume] = useState(status?.volume ?? 80);
+  const [isQualitySwitching, setIsQualitySwitching] = useState(false);
 
   // Sync volume state
   React.useEffect(() => {
@@ -56,6 +113,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   const isPlaying = status?.state === 'playing';
   const isPaused = status?.state === 'paused';
   const isLoading = status?.state === 'loading' || loading || isSubmitting;
+  const currentQuality: AudioQuality = status?.audioQuality || 'high';
 
   const handlePlaySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,6 +146,16 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
     const val = Number(e.target.value);
     setLocalVolume(val);
     onVolumeChange(val);
+  };
+
+  const handleQualitySelect = async (quality: AudioQuality) => {
+    if (quality === currentQuality || isQualitySwitching) return;
+    try {
+      setIsQualitySwitching(true);
+      await onAudioQualityChange(quality);
+    } finally {
+      setIsQualitySwitching(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -154,7 +222,75 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
         </div>
       </form>
 
-      {/* 2. Timeline Progress Bar */}
+      {/* 2. Audio Quality Selector (音質選項: 高音質, 節省流量, 純語音模式) */}
+      <div id="audio-quality-section" className="space-y-2 pt-1 border-t border-zinc-800/80">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+            <Sliders className="w-3.5 h-3.5 text-red-400" />
+            <span>串流音質選項 (yt-dlp Audio Quality)</span>
+          </div>
+          <span className="text-[10px] font-mono text-zinc-500 hidden xs:inline">
+            參數: {QUALITY_OPTIONS.find((q) => q.id === currentQuality)?.qualityParam}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5">
+          {QUALITY_OPTIONS.map((opt) => {
+            const Icon = opt.icon;
+            const isSelected = currentQuality === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                id={`btn-quality-${opt.id}`}
+                onClick={() => handleQualitySelect(opt.id)}
+                disabled={isQualitySwitching}
+                title={`切換為 ${opt.label} (${opt.qualityParam})`}
+                className={`relative flex items-center justify-between p-2.5 sm:p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  isSelected
+                    ? `${opt.activeBg} ${opt.activeBorder} shadow-sm ring-1 ring-white/10`
+                    : 'bg-zinc-950/60 border-zinc-800/90 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850 hover:border-zinc-700'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      isSelected ? opt.activeBg : 'bg-zinc-900 border border-zinc-800'
+                    }`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isSelected ? opt.activeText : 'text-zinc-400'}`} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-xs sm:text-sm font-semibold truncate ${isSelected ? opt.activeText : 'text-zinc-200'}`}>
+                        {opt.label}
+                      </span>
+                      {isSelected && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                      )}
+                    </div>
+                    <span className="text-[10px] sm:text-[11px] text-zinc-500 block truncate">
+                      {opt.subLabel}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="shrink-0 pl-1.5">
+                  <span
+                    className={`text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded-md border ${
+                      isSelected ? opt.badgeBg : 'bg-zinc-900 text-zinc-500 border-zinc-800'
+                    }`}
+                  >
+                    {opt.tag}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. Timeline Progress Bar */}
       <div className="space-y-1.5 pt-1">
         <div className="relative group flex items-center py-1">
           <input
@@ -177,7 +313,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
         </div>
       </div>
 
-      {/* 3. Main Playback Control Bar */}
+      {/* 4. Main Playback Control Bar */}
       <div className="flex flex-col md:flex-row items-center justify-between gap-4 sm:gap-6 pt-1">
         {/* Core Actions: Loop, Rewind 5s, Play/Pause, Forward 5s, Stop */}
         <div className="flex items-center justify-center gap-2.5 sm:gap-3 w-full md:w-auto">

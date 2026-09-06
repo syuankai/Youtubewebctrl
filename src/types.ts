@@ -1,3 +1,5 @@
+export type AudioQuality = 'high' | 'saver' | 'voice';
+
 export interface PlayerStatus {
   state: 'idle' | 'loading' | 'playing' | 'paused' | 'error';
   url: string;
@@ -9,6 +11,8 @@ export interface PlayerStatus {
   volume: number;
   isMuted: boolean;
   loop: 'none' | 'one' | 'all';
+  audioQuality: AudioQuality;
+  audioQualityLabel?: string;
   lastError: string | null;
   queue: QueueItem[];
   history: HistoryItem[];
@@ -18,6 +22,7 @@ export interface PlayerStatus {
     ytdlpAvailable: boolean;
     socketPath: string;
     audioOutput: string;
+    currentAudioDevice?: string;
     pid?: number;
   };
 }

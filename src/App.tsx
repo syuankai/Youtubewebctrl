@@ -8,7 +8,7 @@ import {
   Database,
   Sliders,
 } from 'lucide-react';
-import { PlayerStatus, SystemInfo } from './types';
+import { PlayerStatus, SystemInfo, AudioQuality } from './types';
 import { NowPlayingCard } from './components/NowPlayingCard';
 import { PlayerControls } from './components/PlayerControls';
 import { LinuxServiceCard } from './components/LinuxServiceCard';
@@ -194,6 +194,27 @@ export default function App() {
     if (data.status) setStatus(data.status);
   };
 
+  const handleAudioQualityChange = async (quality: AudioQuality) => {
+    setStatus((prev) => (prev ? { ...prev, audioQuality: quality } : null));
+    try {
+      const res = await fetch('/api/audio-quality', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quality }),
+      });
+      const data = await res.json();
+      if (data.status) setStatus(data.status);
+      if (browserAudioRef.current && browserAudioSync && status?.url) {
+        browserAudioRef.current.src = `/api/stream?url=${encodeURIComponent(status.url)}&quality=${quality}`;
+        if (status?.state === 'playing') {
+          browserAudioRef.current.play().catch(() => {});
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const handleRemoveQueue = async (id: string) => {
     const res = await fetch(`/api/queue/${id}`, { method: 'DELETE' });
     const data = await res.json();
@@ -211,7 +232,7 @@ export default function App() {
       {/* Hidden browser audio sync player */}
       <audio
         ref={browserAudioRef}
-        src={status?.url ? `/api/stream?url=${encodeURIComponent(status.url)}` : undefined}
+        src={status?.url ? `/api/stream?url=${encodeURIComponent(status.url)}&quality=${status.audioQuality || 'high'}` : undefined}
       />
 
       {/* Top Navigation Bar */}
@@ -361,7 +382,7 @@ export default function App() {
         {/* 1. Current playback display (Optimized for mobile & desktop) */}
         <NowPlayingCard status={status} onQuickPlay={handlePlay} />
 
-        {/* 2. Interactive Player Controls (Play/Pause, Skip 5s, Volume, Timeline) */}
+        {/* 2. Interactive Player Controls (Play/Pause, Skip 5s, Volume, Timeline, Audio Quality) */}
         <PlayerControls
           status={status}
           onPlay={handlePlay}
@@ -374,6 +395,7 @@ export default function App() {
           onToggleMute={handleToggleMute}
           onStop={handleStop}
           onLoopChange={handleLoopChange}
+          onAudioQualityChange={handleAudioQualityChange}
           loading={loading}
         />
 

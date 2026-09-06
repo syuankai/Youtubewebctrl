@@ -240,8 +240,8 @@ class RedisCacheService {
     });
   }
 
-  public async getStreamUrl(url: string): Promise<string | null> {
-    const key = `yt:stream:${url}`;
+  public async getStreamUrl(url: string, quality: string = 'high'): Promise<string | null> {
+    const key = `yt:stream:${quality}:${url}`;
     if (this.redisClient && this.isConnected) {
       try {
         const direct = await this.redisClient.get(key);
@@ -262,8 +262,8 @@ class RedisCacheService {
     return null;
   }
 
-  public async setStreamUrl(url: string, directUrl: string, ttlSeconds = 14400): Promise<void> {
-    const key = `yt:stream:${url}`;
+  public async setStreamUrl(url: string, directUrl: string, quality: string = 'high', ttlSeconds = 14400): Promise<void> {
+    const key = `yt:stream:${quality}:${url}`;
     if (this.redisClient && this.isConnected) {
       try {
         await this.redisClient.set(key, directUrl, 'EX', ttlSeconds);

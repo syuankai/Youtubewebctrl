@@ -1,6 +1,6 @@
 import React from 'react';
-import { Radio, Volume2, VolumeX, Disc3, Server, AlertCircle } from 'lucide-react';
-import { PlayerStatus } from '../types';
+import { Radio, Volume2, VolumeX, Disc3, Server, AlertCircle, Sparkles, Wifi, Mic } from 'lucide-react';
+import { PlayerStatus, AudioQuality } from '../types';
 
 interface NowPlayingCardProps {
   status: PlayerStatus | null;
@@ -11,6 +11,7 @@ export const NowPlayingCard: React.FC<NowPlayingCardProps> = ({ status }) => {
   const isPlaying = status?.state === 'playing';
   const isLoading = status?.state === 'loading';
   const isPaused = status?.state === 'paused';
+  const quality: AudioQuality = status?.audioQuality || 'high';
 
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds) || seconds < 0) return '00:00';
@@ -23,6 +24,34 @@ export const NowPlayingCard: React.FC<NowPlayingCardProps> = ({ status }) => {
     }
     return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
+
+  const getQualityBadge = () => {
+    if (quality === 'saver') {
+      return {
+        icon: Wifi,
+        label: '節省流量',
+        bitrate: '96k',
+        color: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
+      };
+    }
+    if (quality === 'voice') {
+      return {
+        icon: Mic,
+        label: '純語音',
+        bitrate: '64k',
+        color: 'text-purple-300 bg-purple-500/10 border-purple-500/30',
+      };
+    }
+    return {
+      icon: Sparkles,
+      label: '高音質',
+      bitrate: '320k',
+      color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+    };
+  };
+
+  const qualityBadge = getQualityBadge();
+  const QualityIcon = qualityBadge.icon;
 
   return (
     <div
@@ -67,11 +96,23 @@ export const NowPlayingCard: React.FC<NowPlayingCardProps> = ({ status }) => {
           </div>
         </div>
 
-        {/* Backend daemon engine badge */}
-        <div className="flex items-center gap-1.5 text-[11px] sm:text-xs px-2.5 py-1 rounded-full bg-zinc-800/80 border border-zinc-700/60 text-zinc-300 shrink-0">
-          <Server className="w-3 h-3 text-red-400" />
-          <span className="hidden xs:inline">mpv + yt-dlp</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+        {/* Status badges: Quality + Backend daemon engine badge */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div
+            id="badge-nowplaying-quality"
+            title={`目前音質: ${qualityBadge.label} (${qualityBadge.bitrate})`}
+            className={`flex items-center gap-1.5 text-[11px] sm:text-xs px-2.5 py-1 rounded-full border ${qualityBadge.color}`}
+          >
+            <QualityIcon className="w-3 h-3 shrink-0" />
+            <span className="hidden xs:inline">{qualityBadge.label}</span>
+            <span className="text-[9px] font-mono opacity-80">{qualityBadge.bitrate}</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs px-2.5 py-1 rounded-full bg-zinc-800/80 border border-zinc-700/60 text-zinc-300">
+            <Server className="w-3 h-3 text-red-400 shrink-0" />
+            <span className="hidden md:inline">mpv + yt-dlp</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          </div>
         </div>
       </div>
 

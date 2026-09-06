@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { exec, spawn } from 'child_process';
 import { createServer as createViteServer } from 'vite';
-import { mpvController } from './server/mpvController.js';
+import { mpvController, AUDIO_QUALITY_PRESETS, AudioQuality } from './server/mpvController.js';
 import { bluetoothController } from './server/bluetoothController.js';
 import { redisCache } from './server/redisCache.js';
 
@@ -23,16 +23,39 @@ app.get('/api/status', (req, res) => {
 
 // Play a YouTube URL (pure audio stream)
 app.post('/api/play', async (req, res) => {
-  const { url, title } = req.body;
+  const { url, title, quality } = req.body;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: '請提供有效的 YouTube 網址' });
   }
 
   try {
+    if (quality && ['high', 'saver', 'voice'].includes(quality)) {
+      await mpvController.setAudioQuality(quality as AudioQuality);
+    }
     const success = await mpvController.play(url.trim(), title);
     res.json({ success, status: mpvController.getStatus() });
   } catch (err: any) {
     res.status(500).json({ error: err.message || '播放失敗' });
+  }
+});
+
+// Switch audio quality (high quality, data saver, voice mode)
+app.post('/api/audio-quality', async (req, res) => {
+  const { quality } = req.body;
+  if (!quality || !['high', 'saver', 'voice'].includes(quality)) {
+    return res.status(400).json({ error: '請提供有效音質選項 (high, saver, voice)' });
+  }
+
+  try {
+    const success = await mpvController.setAudioQuality(quality as AudioQuality);
+    res.json({
+      success,
+      quality,
+      preset: AUDIO_QUALITY_PRESETS[quality as AudioQuality],
+      status: mpvController.getStatus(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '設定音質失敗' });
   }
 });
 
@@ -305,30 +328,38 @@ app.get('/api/system-info', (req, res) => {
 app.get('/api/stream', async (req, res) => {
   const status = mpvController.getStatus();
   const targetUrl = (req.query.url as string) || status.url;
+  const qualityQuery = (req.query.quality as AudioQuality) || status.audioQuality || 'high';
+  const quality: AudioQuality = ['high', 'saver', 'voice'].includes(qualityQuery) ? qualityQuery : 'high';
+  const preset = AUDIO_QUALITY_PRESETS[quality] || AUDIO_QUALITY_PRESETS.high;
 
   if (!targetUrl) {
     return res.status(400).send('No audio URL playing');
   }
 
-  // 1. Check Redis / Memory cache first for stream URL
+  // 1. Check Redis / Memory cache first for stream URL by quality
   try {
-    const cachedStreamUrl = await redisCache.getStreamUrl(targetUrl);
+    const cachedStreamUrl = await redisCache.getStreamUrl(targetUrl, quality);
     if (cachedStreamUrl) {
       return res.redirect(cachedStreamUrl);
     }
   } catch {}
 
-  // Use yt-dlp to extract direct audio URL or pipe audio
-  exec(`yt-dlp -f bestaudio -g "${targetUrl}"`, { timeout: 8000 }, (err, directUrl) => {
+  // Use yt-dlp to extract direct audio URL with format and --audio-quality
+  exec(`yt-dlp -f "${preset.ytdlFormat}" --audio-quality ${preset.audioQuality} -g "${targetUrl}"`, { timeout: 8000 }, (err, directUrl) => {
     if (!err && directUrl && directUrl.trim().startsWith('http')) {
       const cleanUrl = directUrl.trim();
-      redisCache.setStreamUrl(targetUrl, cleanUrl).catch(() => {});
+      redisCache.setStreamUrl(targetUrl, cleanUrl, quality).catch(() => {});
       return res.redirect(cleanUrl);
     }
 
-    // Fallback to pipe
+    // Fallback to streaming pipe with --audio-quality parameter
     res.setHeader('Content-Type', 'audio/webm');
-    const ytdl = spawn('yt-dlp', ['-f', 'bestaudio', '-o', '-', targetUrl]);
+    const ytdl = spawn('yt-dlp', [
+      '-f', preset.ytdlFormat,
+      '--audio-quality', preset.audioQuality,
+      '-o', '-',
+      targetUrl,
+    ]);
     ytdl.stdout.pipe(res);
     req.on('close', () => {
       ytdl.kill();
